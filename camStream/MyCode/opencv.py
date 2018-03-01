@@ -21,6 +21,7 @@
 
 import sys
 import time
+from timeit import default_timer as timer
 
 from list_devices import select_camera
 from list_formats import select_format
@@ -34,17 +35,27 @@ gi.require_version("Gst", "1.0")
 from gi.repository import Tcam, Gst, GLib
 
 import cv2
+import csv
 import numpy as np
 
-history = 5
-nmixtures = 5
-backgroundRatio = .1
-noiseSigma = 15
+count = 0
+tstart = 0.0
+history = 400
+dist2Threshold = 200.0
+detectShadows = False
 cx = 0
 cy = 0
+c = 0
 x = 0
 y = 0
-fgbg = cv2.createBackgroundSubtractorMOG2(history,15,False)
+dH = 0
+dV = 0
+thetaH = 14.68
+thetaV = 10.5
+Hpx = 640.0
+Vpx = 480.0
+fgbg = cv2.createBackgroundSubtractorKNN(history,dist2Threshold,detectShadows)
+#fgbg = cv2.cudabgsegm.createBackgroundSubtractorMOG(history,nmixtures,backgroundRatio,noiseSigma)
 
 # Small helper function to display opencv buffers via GStreamer.
 #
@@ -66,11 +77,7 @@ def callback(sink, display_input):
     This function will be called in a separate thread when our appsink
     says there is data for us.
     sample = sink.emit("pull-sample")
-    history = 5
-    nmixtures = 5
-    backgroundRatio = .1
-    noiseSigma = 15
-    fgbg = cv2.createBackgroundSubtractorMOG2(history,16,False)"""
+    """
 
     sample = sink.emit("pull-sample")
     if sample:
@@ -79,13 +86,20 @@ def callback(sink, display_input):
         caps = sample.get_caps()
         width = caps[0].get_value("width")
         height = caps[0].get_value("height")
+        #frameCount = int(caps[0].get(cv2.CAP_PROP_POS_FRAMES))
+        global count
+        global tstart
+        if (count == 0):
+            tstart = timer()
+        count = count + 1
+        frameCount = int((timer() - tstart) * 8)
 
         try:
             res, mapinfo = buf.map(Gst.MapFlags.READ)
             # actual image buffer and size
-            # data = mapinfo.data
-            # size = mapinfo.size
-
+            #data = mapinfo.data
+            #size = mapinfo.size
+            
             # Create a numpy array from the data
             img_array = np.asarray(bytearray(mapinfo.data), dtype=np.uint8)
             # Give the array the correct dimensions of the video image
@@ -97,25 +111,45 @@ def callback(sink, display_input):
             #frame = process_frame(frame)
             #fgbg = cv2.createBackgroundSubtractorMOG2(3,16,False)
             fgmask = fgbg.apply(img)
-            #fgmask = cv2.dilate(fgmask, None, iterations=5)
-            #cnts = cv2.findContours(fgmask.copy(), cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)[-2]
-            '''if len(cnts) > 0:
+            #fgmask = cv2.dilate(fgmask, None, iterations=3)
+            cnts = cv2.findContours(fgmask.copy(), cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)[-2]
+            if len(cnts) > 0:
                 # Find max contour area to use as centroid
+                global c
                 c = max(cnts, key = cv2.contourArea)
                 # Compute the centroid
                 M = cv2.moments(c)
                 if M['m00'] != 0:
+                    global cx
                     cx = int(M['m10']/M['m00'])
+                    global cy
                     cy = int(M['m01']/M['m00'])       
     
             # Draw contours and centroid
-            cv2.drawContours(fgmask, [c], -1, (0,255,0), 2)
+            cv2.drawContours(fgmask, [c], -1, (0,0,255), 2)
             cv2.circle(fgmask, (cx,cy), 8, (0, 0, 255), -1)
-            '''
+            
+            # Pixel Calculation
+            x = cx - width/2
+            y = height/2 - cy
+            
+            # Calculate Turning Angles
+            dH = -x*thetaH/Hpx
+            dV = y*thetaV/Vpx
+            
+            currT = timer()
+            # File Output
+            with open('centroid.csv', 'a') as csvfile:
+                centroid = csv.writer(csvfile)
+                if(frameCount%4 == 0):
+                    centroid.writerow([currT-tstart,frameCount,x,y,dH,dV])
+            
+            if(frameCount%4 == 0):
+                print ("deltaH angle = %.4f degrees" % dH)
+                print ("deltaV angle = %.4f degrees" % dV)
+                print ('\n')
             
             # Show the result via our display pipeline
-
-            #cv2.imshow('Background Subtraction',fgmask)  
             show_img(display_input, fgmask)
 
         finally:
@@ -137,7 +171,7 @@ def main():
         serial = select_camera(source)
         if serial != 0:
             connected = True
-        sleep(3)
+        sleep(1)
 
     if serial is not None:
         source.set_property("serial", serial)
@@ -147,7 +181,7 @@ def main():
     # Ask the user for the format that should be used for capturing
     print("Selecting camera format and frame rate...")
     fmt = select_format(source.get_by_name("tcambin-source"))
-    sleep(3)
+    sleep(1)
     # If the user selected a bayer format, we change it to BGRx so that the
     # tcambin will decode the bayer pattern to a color image
     #if fmt.get_name() == "video/x-bayer":
@@ -187,7 +221,6 @@ def main():
     convert.link(scale)
     scale.link(output)
 
-
     # Usually one would use cv2.imgshow(...) to display an image but this is
     # tends to hang in threaded environments. So we create a small display
     # pipeline which we could use to display the opencv buffers.
@@ -199,6 +232,7 @@ def main():
 
     pipeline.set_state(Gst.State.PLAYING)
 
+    #source.focus_one_push()
     print("Press Ctrl-C to stop")
     loop = GLib.MainLoop()
     try:

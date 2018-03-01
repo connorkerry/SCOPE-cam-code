@@ -80,7 +80,7 @@ def select_camera(source):
 
     print("Could not find camera.")
 
-    return 0
+    return None
     # get input from user and only stop asking when
     # input is legal
     """legal_input = False
