@@ -137,6 +137,12 @@ def callback(sink, display_input):
             dH = -x*thetaH/Hpx
             dV = y*thetaV/Vpx
             
+            if abs(dH) < 0.01 and abs(dV) < 0.01 and frameCount > 40:
+                #INSERT COMMUNICATION CODE HERE FOR BEGGINNING LRF USAGE
+                #Zach -- Replace these dummy instructions with your instructions
+                history = 500
+                history = 400
+            
             currT = timer()
             # File Output
             with open('centroid.csv', 'a') as csvfile:
