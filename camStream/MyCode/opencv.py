@@ -21,6 +21,7 @@
 
 import sys
 import time
+import posix_ipc
 from timeit import default_timer as timer
 
 from list_devices import select_camera
@@ -40,7 +41,7 @@ import numpy as np
 
 count = 0
 tstart = 0.0
-history = 400
+history = 300
 dist2Threshold = 200.0
 detectShadows = False
 cx = 0
@@ -55,6 +56,8 @@ thetaV = 10.5
 Hpx = 640.0
 Vpx = 480.0
 fgbg = cv2.createBackgroundSubtractorKNN(history,dist2Threshold,detectShadows)
+sem_name = sys.argv[1]
+semaphore = posix_ipc.Semaphore(sem_name)
 #fgbg = cv2.cudabgsegm.createBackgroundSubtractorMOG(history,nmixtures,backgroundRatio,noiseSigma)
 
 # Small helper function to display opencv buffers via GStreamer.
@@ -111,7 +114,7 @@ def callback(sink, display_input):
             #frame = process_frame(frame)
             #fgbg = cv2.createBackgroundSubtractorMOG2(3,16,False)
             fgmask = fgbg.apply(img)
-            #fgmask = cv2.dilate(fgmask, None, iterations=3)
+            fgmask = cv2.dilate(fgmask, None, iterations=3)
             cnts = cv2.findContours(fgmask.copy(), cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)[-2]
             if len(cnts) > 0:
                 # Find max contour area to use as centroid
@@ -141,14 +144,22 @@ def callback(sink, display_input):
             # File Output
             with open('centroid.csv', 'a') as csvfile:
                 centroid = csv.writer(csvfile)
-                if(frameCount%4 == 0):
+                if(frameCount%8 == 0):
                     centroid.writerow([currT-tstart,frameCount,x,y,dH,dV])
             
-            if(frameCount%4 == 0):
+            if(frameCount%8 == 0):
                 print ("deltaH angle = %.4f degrees" % dH)
                 print ("deltaV angle = %.4f degrees" % dV)
                 print ('\n')
             
+            
+            #IF STATEMENT TO START LRF TRACKING
+            if frameCount > 16 and abs(dH) < 0.01 and abs(dV) < 0.01:
+                #insert comm code here inplace of history dummy code
+                semaphore.release()
+
+            
+                
             # Show the result via our display pipeline
             show_img(display_input, fgmask)
 
@@ -238,6 +249,7 @@ def main():
     try:
         loop.run()
     except KeyboardInterrupt:
+        semaphore.release()
         print("Ctrl-C pressed, terminating")
 
     # this stops the pipeline and frees all resources
