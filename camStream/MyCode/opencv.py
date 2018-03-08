@@ -39,11 +39,16 @@ import cv2
 import csv
 import numpy as np
 
+# Performing the test at a close distance (more pixels taken up by TARGET)?
+# If so, use MOG2 subtractor, if not use KNN subtractor
+closeTest = True
 count = 0
 tstart = 0.0
-history = 300
-dist2Threshold = 200.0
+history = 500
+dist2Threshold = 16.0
+varThreshold = 200.0
 detectShadows = False
+currImg = None
 cx = 0
 cy = 0
 c = 0
@@ -55,7 +60,12 @@ thetaH = 14.68
 thetaV = 10.5
 Hpx = 640.0
 Vpx = 480.0
-fgbg = cv2.createBackgroundSubtractorKNN(history,dist2Threshold,detectShadows)
+
+if closeTest:
+    history = 100
+    fgbg = cv2.createBackgroundSubtractorMOG2(history,varThreshold,detectShadows)
+else:
+    fgbg = cv2.createBackgroundSubtractorKNN(history,dist2Threshold,detectShadows)
 sem_name = sys.argv[1]
 semaphore = posix_ipc.Semaphore(sem_name)
 #fgbg = cv2.cudabgsegm.createBackgroundSubtractorMOG(history,nmixtures,backgroundRatio,noiseSigma)
@@ -107,6 +117,7 @@ def callback(sink, display_input):
             img_array = np.asarray(bytearray(mapinfo.data), dtype=np.uint8)
             # Give the array the correct dimensions of the video image
             img = img_array.reshape((height, width))
+            currImg = img
             # Perform opencv operations on the image data
             #img = cv2.medianBlur(img, 5)
             #th = cv2.adaptiveThreshold(img, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 11, 2)
@@ -114,7 +125,8 @@ def callback(sink, display_input):
             #frame = process_frame(frame)
             #fgbg = cv2.createBackgroundSubtractorMOG2(3,16,False)
             fgmask = fgbg.apply(img)
-            fgmask = cv2.dilate(fgmask, None, iterations=3)
+            if !closeTest:
+                fgmask = cv2.dilate(fgmask, None, iterations=3)
             cnts = cv2.findContours(fgmask.copy(), cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)[-2]
             if len(cnts) > 0:
                 # Find max contour area to use as centroid
@@ -129,7 +141,7 @@ def callback(sink, display_input):
                     cy = int(M['m01']/M['m00'])       
     
             # Draw contours and centroid
-            cv2.drawContours(fgmask, [c], -1, (0,0,255), 2)
+            #cv2.drawContours(fgmask, [c], -1, (0,0,255), 2)
             cv2.circle(fgmask, (cx,cy), 8, (0, 0, 255), -1)
             
             # Pixel Calculation
@@ -157,9 +169,7 @@ def callback(sink, display_input):
             if frameCount > 16 and abs(dH) < 0.01 and abs(dV) < 0.01:
                 #insert comm code here inplace of history dummy code
                 semaphore.release()
-
-            
-                
+    
             # Show the result via our display pipeline
             show_img(display_input, fgmask)
 
@@ -249,6 +259,9 @@ def main():
     try:
         loop.run()
     except KeyboardInterrupt:
+        global img
+        global imgCurr
+        cv2.imwrite('AlecPic.jpg', imgCurr)
         semaphore.release()
         print("Ctrl-C pressed, terminating")
 
